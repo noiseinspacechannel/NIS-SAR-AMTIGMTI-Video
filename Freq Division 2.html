@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>X-Band Frequency Split Visualization</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background-color: #0f172a;
+            color: #e2e8f0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        .canvas-container {
+            position: relative;
+            width: 100%;
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            background-color: #000;
+        }
+        .barcode-canvas {
+            image-rendering: pixelated;
+            height: 120px;
+            border: 1px solid #334155;
+            border-bottom: none;
+        }
+        .spec-canvas {
+            height: 150px;
+            border: 1px solid #334155;
+            border-top: none; 
+            background-color: #000510;
+        }
+        .axis-label {
+            font-family: monospace;
+            font-size: 0.75rem;
+            color: #94a3b8;
+        }
+        .freq-marker {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            border-left: 1px dashed rgba(255, 255, 255, 0.1);
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8 min-h-screen flex flex-col items-center">
+
+    <div class="max-w-6xl w-full space-y-12">
+        <header class="text-center">
+            <h1 class="text-3xl font-bold mb-2 text-white">X-Band Channelization</h1>
+            <p class="text-gray-400">Splitting 2 GHz of Spectrum (9-11 GHz) into 5 Chirps with Safety Bands</p>
+        </header>
+
+        <!-- Visualization Block -->
+        <div class="space-y-1">
+            
+            <!-- Labels -->
+            <div class="flex justify-between px-2 max-w-[1000px] mx-auto text-xs font-mono text-amber-300 uppercase tracking-widest mb-2">
+                <span>Temporal View</span>
+                <span>0 GHz &longrightarrow; 12 GHz</span>
+            </div>
+
+            <!-- 1. The Barcode Visualization -->
+            <div class="canvas-container">
+                <canvas id="wave-canvas" width="1200" height="120" class="barcode-canvas rounded-t-lg"></canvas>
+                <!-- Axis Markers -->
+                <div id="grid-overlay" class="absolute inset-0 pointer-events-none"></div>
+            </div>
+
+            <!-- 2. Spectrum Analyzer View -->
+            <div class="canvas-container">
+                <canvas id="spec-canvas" width="1200" height="200" class="spec-canvas rounded-b-lg shadow-2xl"></canvas>
+            </div>
+            
+            <!-- X-Axis Labels -->
+            <div class="canvas-container flex justify-between px-1 mt-2">
+                <span class="axis-label">0</span>
+                <span class="axis-label">2</span>
+                <span class="axis-label">4</span>
+                <span class="axis-label">6</span>
+                <span class="axis-label">8</span>
+                <span class="axis-label text-amber-500 font-bold">9</span>
+                <span class="axis-label text-amber-500 font-bold">11</span>
+                <span class="axis-label">12 GHz</span>
+            </div>
+        </div>
+
+        <!-- Legend / Info -->
+        <div class="max-w-[1000px] mx-auto w-full">
+            <div class="bg-slate-800 p-6 rounded-lg border border-slate-700 border-l-4 border-l-amber-500">
+                <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                    <div>
+                        <h3 class="text-amber-400 font-bold text-lg mb-1">Channel Configuration</h3>
+                        <p class="text-sm text-gray-400">Total Bandwidth: 2.0 GHz (9.0 - 11.0 GHz)</p>
+                    </div>
+                    <div class="grid grid-cols-2 md:grid-cols-5 gap-4 text-xs font-mono text-gray-300">
+                        <div class="bg-slate-900 p-2 rounded border border-slate-700">
+                            <div class="text-amber-500 font-bold">CH 1</div>
+                            <div>9.2 GHz</div>
+                            <div class="text-gray-500">BW: 250MHz</div>
+                        </div>
+                        <div class="bg-slate-900 p-2 rounded border border-slate-700">
+                            <div class="text-amber-500 font-bold">CH 2</div>
+                            <div>9.6 GHz</div>
+                            <div class="text-gray-500">BW: 250MHz</div>
+                        </div>
+                        <div class="bg-slate-900 p-2 rounded border border-slate-700">
+                            <div class="text-amber-500 font-bold">CH 3</div>
+                            <div>10.0 GHz</div>
+                            <div class="text-gray-500">BW: 250MHz</div>
+                        </div>
+                        <div class="bg-slate-900 p-2 rounded border border-slate-700">
+                            <div class="text-amber-500 font-bold">CH 4</div>
+                            <div>10.4 GHz</div>
+                            <div class="text-gray-500">BW: 250MHz</div>
+                        </div>
+                        <div class="bg-slate-900 p-2 rounded border border-slate-700">
+                            <div class="text-amber-500 font-bold">CH 5</div>
+                            <div>10.8 GHz</div>
+                            <div class="text-gray-500">BW: 250MHz</div>
+                        </div>
+                    </div>
+                </div>
+                <p class="mt-4 text-xs text-gray-500 italic">
+                    * Each channel has 250 MHz bandwidth. 
+                    * Safety bands (Guard bands) of 150 MHz separate each channel to prevent interference.
+                </p>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // Configuration
+        const MAX_FREQ = 12.0; // GHz
+        
+        // Define the 5 Chirps
+        // 2 GHz range from 9.0 to 11.0
+        // 5 slots = 400 MHz centers
+        // Centers: 9.2, 9.6, 10.0, 10.4, 10.8
+        // BW: 250 MHz (+/- 0.125) - Decreased from 300 to widen gap
+        // Guard: 150 MHz (Increased from 100)
+        const CHIRPS = [
+            { center: 9.2, bw: 0.25 },
+            { center: 9.6, bw: 0.25 },
+            { center: 10.0, bw: 0.25 },
+            { center: 10.4, bw: 0.25 },
+            { center: 10.8, bw: 0.25 }
+        ];
+
+        function getChirpIntensity(freqGHz) {
+            // Returns intensity 0.0 to 1.0 if inside a chirp
+            // Returns -1 if outside
+            
+            for (let chirp of CHIRPS) {
+                const start = chirp.center - (chirp.bw / 2);
+                const end = chirp.center + (chirp.bw / 2);
+                
+                if (freqGHz >= start && freqGHz <= end) {
+                    return 1.0; // Inside chirp
+                }
+            }
+            return 0.0;
+        }
+
+        function drawWavefronts() {
+            const canvas = document.getElementById('wave-canvas');
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width;
+            const h = canvas.height;
+
+            const imgData = ctx.createImageData(w, h);
+            const data = imgData.data;
+
+            // Visual Scaling for Temporal View
+            // High frequency = dense lines. 
+            // We want to see the 5 blocks clearly.
+            const VISUAL_SCALE = 0.35; 
+
+            for (let x = 0; x < w; x++) {
+                const freqGHz = (x / w) * MAX_FREQ;
+                
+                let signal = 0;
+                let isActive = false;
+
+                if (getChirpIntensity(freqGHz) > 0) {
+                    isActive = true;
+                    // Sinusoidal pattern representing the chirp phase/frequency density
+                    const localFreq = freqGHz * VISUAL_SCALE;
+                    signal = Math.sin(x * localFreq * 0.5); 
+                } else {
+                    signal = -1; // Black
+                }
+
+                // Map -1..1 to 0..255 Grayscale
+                let intensity = Math.floor((signal * 0.5 + 0.5) * 255);
+                if (!isActive) intensity = 0;
+
+                // Grayscale
+                const r = intensity;
+                const g = intensity;
+                const b = intensity;
+
+                for (let y = 0; y < h; y++) {
+                    const idx = (y * w + x) * 4;
+                    data[idx] = r;
+                    data[idx+1] = g;
+                    data[idx+2] = b;
+                    data[idx+3] = 255;
+                }
+            }
+
+            ctx.putImageData(imgData, 0, 0);
+        }
+
+        function drawSpectrum() {
+            const canvas = document.getElementById('spec-canvas');
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width;
+            const h = canvas.height;
+
+            // Clear
+            ctx.fillStyle = "#000510";
+            ctx.fillRect(0, 0, w, h);
+
+            // Grid
+            ctx.strokeStyle = "#1e293b";
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            // Vertical lines every 1 GHz
+            for (let f = 0; f <= MAX_FREQ; f += 1) {
+                const x = (f / MAX_FREQ) * w;
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, h);
+            }
+            // Horizontal lines
+            for (let i = 1; i < 4; i++) {
+                const y = (i/4) * h;
+                ctx.moveTo(0, y);
+                ctx.lineTo(w, y);
+            }
+            ctx.stroke();
+
+            // --- Draw Trace ---
+            ctx.lineJoin = 'round';
+            ctx.lineWidth = 2;
+            
+            const noiseFloor = h * 0.85;
+            const highLevel = h * 0.25;
+
+            ctx.beginPath();
+            
+            for (let x = 0; x < w; x++) {
+                const freqGHz = (x / w) * MAX_FREQ;
+                let y = noiseFloor;
+                
+                let inBand = false;
+
+                // Check which band we are in
+                for (let chirp of CHIRPS) {
+                    const start = chirp.center - (chirp.bw / 2);
+                    const end = chirp.center + (chirp.bw / 2);
+                    
+                    if (freqGHz >= start && freqGHz <= end) {
+                        inBand = true;
+                        y = highLevel;
+                        // Ripple
+                        y += Math.sin(freqGHz * 40) * 3 + (Math.random() * 4);
+                        break;
+                    }
+                    
+                    // Skirts (Guard band transition)
+                    const distToEdge = Math.min(Math.abs(freqGHz - start), Math.abs(freqGHz - end));
+                    if (!inBand && freqGHz > start - 0.1 && freqGHz < end + 0.1 && distToEdge < 0.1) {
+                         // Linear falloff
+                         const falloff = distToEdge / 0.1; // 0 at edge, 1 at 0.1 away
+                         const targetY = highLevel + (noiseFloor - highLevel) * falloff;
+                         // Keep lowest y if multiple overlaps (min function)
+                         y = Math.min(y, targetY);
+                    }
+                }
+                
+                // Add noise floor jitter if at floor
+                if (y >= noiseFloor - 5) {
+                    y += (Math.random() * 6 - 3);
+                }
+
+                if (x===0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+
+            // Create gradient
+            const grad = ctx.createLinearGradient(0, 0, w, 0);
+            grad.addColorStop(0, "#fbbf24"); 
+            grad.addColorStop(1, "#f59e0b");
+
+            ctx.strokeStyle = "#fbbf24";
+            ctx.shadowColor = "rgba(251, 191, 36, 0.2)";
+            ctx.shadowBlur = 8;
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+            
+            // Labels for bands inside spectrum
+            ctx.fillStyle = "rgba(251, 191, 36, 0.7)";
+            ctx.font = "10px monospace";
+            ctx.textAlign = "center";
+            
+            CHIRPS.forEach((chirp, index) => {
+                const centerPx = (chirp.center / MAX_FREQ) * w;
+                ctx.fillText(`CH${index+1}`, centerPx, highLevel - 10);
+            });
+        }
+
+        // Draw Grid Overlay
+        function setupOverlay() {
+            const overlay = document.getElementById('grid-overlay');
+            for (let f = 1; f < MAX_FREQ; f += 1) {
+                const pct = (f / MAX_FREQ) * 100;
+                const div = document.createElement('div');
+                div.className = 'freq-marker';
+                div.style.left = pct + '%';
+                // Highlight the X-band range lines
+                if (f === 9 || f === 11) {
+                    div.style.borderLeftColor = "rgba(245, 158, 11, 0.5)";
+                    div.style.borderLeftStyle = "solid";
+                }
+                overlay.appendChild(div);
+            }
+        }
+
+        // Init
+        drawWavefronts();
+        drawSpectrum();
+        setupOverlay();
+
+    </script>
+</body>
+</html>

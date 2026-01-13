@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Frequency Division Chirp Visualization</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background-color: #0f172a;
+            color: #e2e8f0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        .canvas-container {
+            position: relative;
+            width: 100%;
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            background-color: #000;
+        }
+        .barcode-canvas {
+            image-rendering: pixelated;
+            height: 120px;
+            border: 1px solid #334155;
+            border-bottom: none;
+        }
+        .spec-canvas {
+            height: 150px;
+            border: 1px solid #334155;
+            border-top: none; /* Connect visually */
+            background-color: #000510;
+        }
+        .axis-label {
+            font-family: monospace;
+            font-size: 0.75rem;
+            color: #94a3b8;
+        }
+        .freq-marker {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            border-left: 1px dashed rgba(255, 255, 255, 0.15);
+            pointer-events: none;
+        }
+        .marker-label {
+            position: absolute;
+            top: -20px;
+            transform: translateX(-50%);
+            font-size: 0.7rem;
+            color: #64748b;
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8 min-h-screen flex flex-col items-center">
+
+    <div class="max-w-6xl w-full space-y-12">
+        <header class="text-center">
+            <h1 class="text-3xl font-bold mb-2 text-white">Chirp Frequency Division</h1>
+            <p class="text-gray-400">Comparing C-Band (4 GHz) and X-Band (10 GHz) signals on a unified 0-12 GHz scale</p>
+        </header>
+
+        <!-- Visualization Block -->
+        <div class="space-y-1">
+            
+            <!-- Labels -->
+            <div class="flex justify-between px-2 max-w-[1000px] mx-auto text-xs font-mono text-blue-300 uppercase tracking-widest mb-2">
+                <span>Temporal View</span>
+                <span>0 GHz &longrightarrow; 12 GHz</span>
+            </div>
+
+            <!-- 1. The Barcode Visualization -->
+            <div class="canvas-container">
+                <canvas id="wave-canvas" width="1200" height="120" class="barcode-canvas rounded-t-lg"></canvas>
+                
+                <!-- Axis Markers overlay -->
+                <div id="grid-overlay" class="absolute inset-0 pointer-events-none">
+                    <!-- JS will populate grid lines -->
+                </div>
+            </div>
+
+            <!-- 2. Spectrum Analyzer View (Combined or Split) -->
+            <div class="canvas-container">
+                <canvas id="spec-canvas" width="1200" height="200" class="spec-canvas rounded-b-lg shadow-2xl"></canvas>
+            </div>
+            
+            <!-- X-Axis Labels -->
+            <div class="canvas-container flex justify-between px-1 mt-2">
+                <span class="axis-label">0 GHz</span>
+                <span class="axis-label">2</span>
+                <span class="axis-label">4</span>
+                <span class="axis-label">6</span>
+                <span class="axis-label">8</span>
+                <span class="axis-label">10</span>
+                <span class="axis-label">12 GHz</span>
+            </div>
+        </div>
+
+        <!-- Legend / Info -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-[1000px] mx-auto">
+            <div class="bg-slate-800 p-4 rounded-lg border border-slate-700 border-l-4 border-l-cyan-400">
+                <h3 class="text-cyan-400 font-bold text-lg mb-1">C-Band Signal</h3>
+                <div class="text-sm text-gray-300 space-y-1">
+                    <p><span class="text-gray-500">Frequency:</span> 4.0 - 4.8 GHz</p>
+                    <p><span class="text-gray-500">Bandwidth:</span> 800 MHz</p>
+                    <p class="italic text-xs mt-2 text-gray-400">Wider spacing between wavefronts.</p>
+                </div>
+            </div>
+            <div class="bg-slate-800 p-4 rounded-lg border border-slate-700 border-l-4 border-l-amber-400">
+                <h3 class="text-amber-400 font-bold text-lg mb-1">X-Band Signal</h3>
+                <div class="text-sm text-gray-300 space-y-1">
+                    <p><span class="text-gray-500">Center:</span> 10.0 GHz</p>
+                    <p><span class="text-gray-500">Range:</span> 9.6 - 10.4 GHz (800 MHz BW)</p>
+                    <p class="italic text-xs mt-2 text-gray-400">Dense, narrow wavefronts.</p>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // Configuration
+        const MAX_FREQ = 12.0; // GHz
+        const CANVAS_WIDTH = 1200;
+        
+        // Signal 1: C-Band
+        const C_START = 4.0;
+        const C_END = 4.8;
+        
+        // Signal 2: X-Band (Center 10, 800MHz BW -> +/- 0.4)
+        const X_START = 9.6;
+        const X_END = 10.4;
+
+        function drawWavefronts() {
+            const canvas = document.getElementById('wave-canvas');
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width;
+            const h = canvas.height;
+
+            // Create image buffer
+            const imgData = ctx.createImageData(w, h);
+            const data = imgData.data;
+
+            // Parameters for visual frequency scaling
+            // SCALING LOGIC: 
+            // We want individual waves to be visible, not aliased noise.
+            // At 12 GHz (Max X), we want clean lines.
+            // If scale = 0.5, phase change per pixel at 12GHz is 12*0.5*0.5 = 3 rad ~ PI. (Nyquist limit)
+            // Let's use 0.35 for a safe, clean, dense look at high freq.
+            const VISUAL_SCALE = 0.35; 
+
+            for (let x = 0; x < w; x++) {
+                // Map x to Frequency
+                const freqGHz = (x / w) * MAX_FREQ;
+                
+                let signal = 0;
+                let isActive = false;
+
+                // Check C-Band
+                if (freqGHz >= C_START && freqGHz <= C_END) {
+                    isActive = true;
+                    // Chirp phase logic: sin(k * x^2) effectively
+                    const localFreq = freqGHz * VISUAL_SCALE;
+                    signal = Math.sin(x * localFreq * 0.5); 
+                } 
+                // Check X-Band
+                else if (freqGHz >= X_START && freqGHz <= X_END) {
+                    isActive = true;
+                    const localFreq = freqGHz * VISUAL_SCALE;
+                    signal = Math.sin(x * localFreq * 0.5);
+                }
+
+                // If no signal, just black
+                if (!isActive) {
+                    signal = -1; // Force to black
+                }
+
+                // Map -1..1 to 0..255 Grayscale
+                let intensity = Math.floor((signal * 0.5 + 0.5) * 255);
+                
+                if (!isActive) intensity = 0;
+
+                // Grayscale Coloring (r=g=b)
+                const r = intensity;
+                const g = intensity;
+                const b = intensity;
+
+                for (let y = 0; y < h; y++) {
+                    const idx = (y * w + x) * 4;
+                    data[idx] = r;
+                    data[idx+1] = g;
+                    data[idx+2] = b;
+                    data[idx+3] = 255;
+                }
+            }
+
+            ctx.putImageData(imgData, 0, 0);
+        }
+
+        function drawSpectrum() {
+            const canvas = document.getElementById('spec-canvas');
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width;
+            const h = canvas.height;
+
+            // Clear
+            ctx.fillStyle = "#000510";
+            ctx.fillRect(0, 0, w, h);
+
+            // Grid
+            ctx.strokeStyle = "#1e293b";
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            // Vertical lines every 2 GHz
+            for (let f = 0; f <= MAX_FREQ; f += 2) {
+                const x = (f / MAX_FREQ) * w;
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, h);
+            }
+            // Horizontal lines
+            for (let i = 1; i < 4; i++) {
+                const y = (i/4) * h;
+                ctx.moveTo(0, y);
+                ctx.lineTo(w, y);
+            }
+            ctx.stroke();
+
+            // --- Draw Trace ---
+            ctx.lineJoin = 'round';
+            ctx.lineWidth = 2;
+            
+            const points = [];
+            const noiseFloor = h * 0.85;
+            const highLevel = h * 0.2;
+
+            ctx.beginPath();
+            
+            for (let x = 0; x < w; x++) {
+                const freqGHz = (x / w) * MAX_FREQ;
+                let y = noiseFloor;
+
+                // C-Band Envelope
+                if (freqGHz >= C_START && freqGHz <= C_END) {
+                    y = highLevel;
+                    // Add some noise/ripple
+                    y += Math.sin(freqGHz * 20) * 5 + (Math.random() * 5);
+                }
+                // X-Band Envelope
+                else if (freqGHz >= X_START && freqGHz <= X_END) {
+                    y = highLevel;
+                    // Add some noise/ripple
+                    y += Math.sin(freqGHz * 30) * 5 + (Math.random() * 5);
+                }
+                else {
+                    // Noise floor jitter
+                    y += (Math.random() * 6 - 3);
+                    
+                    // Skirts
+                    const distC = Math.min(Math.abs(freqGHz - C_START), Math.abs(freqGHz - C_END));
+                    const distX = Math.min(Math.abs(freqGHz - X_START), Math.abs(freqGHz - X_END));
+                    
+                    // If close to C-Band
+                    if (freqGHz > C_START - 0.5 && freqGHz < C_END + 0.5 && distC < 0.2) {
+                         y = highLevel + (noiseFloor - highLevel) * (distC / 0.2);
+                    }
+                    // If close to X-Band
+                    if (freqGHz > X_START - 0.5 && freqGHz < X_END + 0.5 && distX < 0.2) {
+                         y = highLevel + (noiseFloor - highLevel) * (distX / 0.2);
+                    }
+                }
+                
+                points.push({x, y});
+                if (x===0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+
+            // Create gradient for trace
+            const grad = ctx.createLinearGradient(0, 0, w, 0);
+            grad.addColorStop(0, "#22d3ee"); // Cyan start
+            grad.addColorStop(0.4, "#22d3ee"); // Cyan mid
+            grad.addColorStop(0.6, "#fbbf24"); // Amber mid
+            grad.addColorStop(1, "#fbbf24"); // Amber end
+
+            ctx.strokeStyle = grad;
+            ctx.shadowColor = "rgba(255, 255, 255, 0.2)";
+            ctx.shadowBlur = 10;
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+            
+            // Labels for bands
+            ctx.fillStyle = "#22d3ee";
+            ctx.textAlign = "center";
+            const cCenterPx = ((C_START + C_END)/2 / MAX_FREQ) * w;
+            ctx.fillText("C-BAND", cCenterPx, highLevel - 15);
+            ctx.fillText("4.0-4.8 GHz", cCenterPx, highLevel - 5);
+
+            ctx.fillStyle = "#fbbf24";
+            const xCenterPx = ((X_START + X_END)/2 / MAX_FREQ) * w;
+            ctx.fillText("X-BAND", xCenterPx, highLevel - 15);
+            ctx.fillText("9.6-10.4 GHz", xCenterPx, highLevel - 5);
+        }
+
+        // Draw Grid Overlay markers for the top container
+        function setupOverlay() {
+            const overlay = document.getElementById('grid-overlay');
+            for (let f = 2; f < MAX_FREQ; f += 2) {
+                const pct = (f / MAX_FREQ) * 100;
+                const div = document.createElement('div');
+                div.className = 'freq-marker';
+                div.style.left = pct + '%';
+                overlay.appendChild(div);
+            }
+        }
+
+        // Init
+        drawWavefronts();
+        drawSpectrum();
+        setupOverlay();
+
+    </script>
+</body>
+</html>

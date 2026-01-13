@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple SAR Demo</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #020617;
+            color: #e2e8f0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            height: 60px;
+            background: rgba(15, 23, 42, 0.95);
+            border-bottom: 1px solid #334155;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+            z-index: 10;
+        }
+        .header h1 { margin: 0; font-size: 1.2rem; color: #38bdf8; display: flex; flex-direction: column; }
+        .header h1 span { font-size: 0.75rem; color: #94a3b8; font-weight: normal; margin-top: 2px; }
+        
+        .controls { display: flex; gap: 12px; align-items: center; }
+        
+        button {
+            background: #1e293b;
+            color: #e2e8f0;
+            border: 1px solid #475569;
+            padding: 6px 14px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 500;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+        button:hover { background: #334155; border-color: #94a3b8; }
+        button.active { background: #0f172a; border-color: #38bdf8; color: #38bdf8; box-shadow: 0 0 0 1px #38bdf8; }
+        
+        button.primary {
+            background: #0ea5e9;
+            color: white;
+            border: none;
+            font-weight: 600;
+            padding: 6px 20px;
+        }
+        button.primary:hover { background: #0284c7; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .separator { width: 1px; height: 24px; background: #334155; margin: 0 5px; }
+
+        .progress-container {
+            width: 120px;
+            height: 8px;
+            background: #334155;
+            border-radius: 4px;
+            overflow: hidden;
+            display: none;
+        }
+        .progress-bar {
+            height: 100%;
+            background: #fbbf24;
+            width: 0%;
+            transition: width 0.1s linear;
+        }
+
+        .main-container {
+            flex: 1;
+            display: flex;
+            flex-direction: row;
+            padding: 12px;
+            gap: 12px;
+            height: calc(100% - 60px);
+            box-sizing: border-box;
+        }
+
+        .panel {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            overflow: hidden;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* 40% Scene, 60% Result */
+        .left-panel { flex: 4; }
+        .right-panel { flex: 6; }
+
+        .panel-title {
+            position: absolute;
+            top: 8px;
+            left: 8px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            color: #cbd5e1;
+            z-index: 5;
+            pointer-events: none;
+            backdrop-filter: blur(2px);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        canvas { display: block; width: 100%; height: 100%; }
+
+        .legend {
+            position: absolute;
+            bottom: 15px;
+            right: 15px;
+            background: rgba(0,0,0,0.8);
+            border: 1px solid #475569;
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            pointer-events: none;
+        }
+        .l-item { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; color: #cbd5e1; }
+        .dot { width: 8px; height: 8px; border-radius: 50%; }
+
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1>Single Channel SAR <span>Doppler Ambiguity Demo</span></h1>
+        <div class="controls">
+            <!-- PRF Controls -->
+            <button id="btn-prf-normal" class="active">Normal PRF (100Hz)</button>
+            <button id="btn-prf-low">Low PRF (40Hz)</button>
+            
+            <div class="separator"></div>
+            
+            <div class="progress-container" id="progress-container">
+                <div class="progress-bar" id="progress-bar"></div>
+            </div>
+            
+            <button id="btn-collect" class="primary">Start Collection</button>
+            <button id="btn-fullscreen">Full Screen</button>
+        </div>
+    </div>
+
+    <div class="main-container">
+        <!-- Left: 3D Scene (Visualization of collection) -->
+        <div class="panel left-panel">
+            <div class="panel-title">RADAR SCENE (Top-Down)</div>
+            <canvas id="canvas-scene"></canvas>
+            
+            <div class="legend">
+                <div class="l-item"><div class="dot" style="background:#64748b"></div> Point Target</div>
+                <div class="l-item"><div class="dot" style="background:rgba(56, 189, 248, 1)"></div> Radar Platform</div>
+                <div class="l-item"><div class="dot" style="background:rgba(251, 191, 36, 0.8)"></div> Beam Footprint</div>
+            </div>
+        </div>
+
+        <!-- Right: Single Result Panel (Magnitude) -->
+        <div class="panel right-panel">
+            <div class="panel-title" style="color:#38bdf8; border-color: rgba(56,189,248,0.3);">SAR IMAGE (Magnitude)</div>
+            <canvas id="canvas-sar"></canvas>
+        </div>
+    </div>
+
+<script>
+(function() {
+
+    /**
+     * CONFIGURATION
+     */
+    const CONFIG = {
+        fc: 9.65e9,
+        bw: 300e6,
+        lambda: 0.031, 
+        satAlt: 3000, 
+        satVel: 50, 
+        
+        // Sampling
+        azimuthPixels: 256, 
+        rangePixels: 128,   
+        
+        prf: 100, // Dynamic
+        
+        sceneWidth: 150, 
+        sceneLength: 128, 
+        
+        groundRangeCenter: 3000 * Math.tan(Math.PI/4) 
+    };
+
+    /**
+     * COMPLEX MATH LIB
+     */
+    const C = {
+        add: (a, b) => ({ re: a.re + b.re, im: a.im + b.im }),
+        mul: (a, b) => ({ re: a.re * b.re - a.im * b.im, im: a.re * b.im + a.im * b.re }),
+        conj: (a) => ({ re: a.re, im: -a.im }),
+        mag: (a) => Math.sqrt(a.re * a.re + a.im * a.im),
+        phase: (a) => Math.atan2(a.im, a.re),
+        exp: (phi) => ({ re: Math.cos(phi), im: Math.sin(phi) }),
+        zero: () => ({ re: 0, im: 0 })
+    };
+
+    /**
+     * FFT Implementation
+     */
+    function fft(input) {
+        const N = input.length;
+        if (N <= 1) return input;
+        const even = fft(input.filter((_, i) => i % 2 === 0));
+        const odd  = fft(input.filter((_, i) => i % 2 === 1));
+        const output = new Array(N);
+        for (let k = 0; k < N / 2; k++) {
+            const angle = -2 * Math.PI * k / N;
+            const t = C.mul({ re: Math.cos(angle), im: Math.sin(angle) }, odd[k]);
+            output[k] = C.add(even[k], t);
+            output[k + N / 2] = C.add(even[k], C.mul({re:-1, im:0}, t)); 
+        }
+        return output;
+    }
+
+    function ifft(input) {
+        const N = input.length;
+        const conjInput = input.map(v => C.conj(v));
+        const f = fft(conjInput);
+        return f.map(v => {
+            const c = C.conj(v);
+            return { re: c.re / N, im: c.im / N };
+        });
+    }
+
+    function fftShift(arr) {
+        const N = arr.length;
+        const half = Math.floor(N/2);
+        return [...arr.slice(half), ...arr.slice(0, half)];
+    }
+
+    /**
+     * SIMULATION STATE
+     */
+    const STATE = {
+        isCollecting: false,
+        pulseIndex: 0,
+        frameThrottle: 0, 
+        
+        raw: [], // Single channel raw data
+        img: [], // Single channel image data
+        
+        matchedFilter: null,
+        satPos: { x: -CONFIG.sceneLength/2, y: 0, z: CONFIG.satAlt }, 
+        targets: [] 
+    };
+
+    function generateTargets() {
+        const targets = [];
+        const grCenter = CONFIG.groundRangeCenter;
+        
+        // Use the Standard Grid
+        const rows = 5; 
+        const cols = 5;
+        const widthX = 70; 
+        const widthY = 80;
+        const spacingX = widthX / (rows - 1);
+        const spacingY = widthY / (cols - 1);
+
+        for(let i=0; i<rows; i++) {
+            for(let j=0; j<cols; j++) {
+                targets.push({
+                    x: (-widthX/2) + spacingX * i,
+                    y: (grCenter - widthY/2) + spacingY * j,
+                    z: 0,
+                    vx: 0, vy: 0,
+                    color: '#cbd5e1'
+                });
+            }
+        }
+        STATE.targets = targets;
+    }
+
+    function precomputeMatchedFilter() {
+        // Matched Filter depends on Geometry and PRF
+        const R_ref = Math.sqrt(Math.pow(CONFIG.groundRangeCenter, 2) + Math.pow(CONFIG.satAlt, 2));
+        const Ka = (2 * Math.pow(CONFIG.satVel, 2)) / (CONFIG.lambda * R_ref);
+        const azPixels = CONFIG.azimuthPixels;
+        const prf = CONFIG.prf;
+
+        const mf = [];
+        for (let k = 0; k < azPixels; k++) {
+            // Frequency axis
+            const f = (k - azPixels/2) * (prf / azPixels);
+            const phase = Math.PI * Math.pow(f, 2) / Ka;
+            mf.push(C.exp(-phase)); 
+        }
+        STATE.matchedFilter = mf;
+    }
+
+    function resetData() {
+        const az = CONFIG.azimuthPixels;
+        const rng = CONFIG.rangePixels;
+        
+        STATE.raw = Array(az).fill(null).map(() => Array(rng).fill(C.zero()));
+        STATE.img = [];
+        
+        STATE.satPos.x = -CONFIG.sceneLength/2;
+        STATE.pulseIndex = 0;
+        
+        // Clear canvases
+        const ctxS = document.getElementById('canvas-sar').getContext('2d');
+        ctxS.clearRect(0,0, ctxS.canvas.width, ctxS.canvas.height);
+
+        document.getElementById('progress-bar').style.width = '0%';
+        
+        generateTargets();
+        precomputeMatchedFilter();
+    }
+
+    /**
+     * PHYSICS ENGINE
+     */
+    function runCollectionStep() {
+        // Revert to original slow pacing
+        if (STATE.frameThrottle < 3) {
+            STATE.frameThrottle++;
+            return;
+        }
+        STATE.frameThrottle = 0;
+
+        if (STATE.pulseIndex >= CONFIG.azimuthPixels) {
+            finishCollection();
+            return;
+        }
+
+        const azIdx = STATE.pulseIndex;
+        // Azimuth resolution logic - related to velocity and PRF?
+        // To emulate real collection, dx = v * dt = v * (1/PRF)
+        const dt = 1 / CONFIG.prf;
+        const dx = CONFIG.satVel * dt;
+        
+        // Adjust start position so center of aperture is center of scene
+        const totalLength = dx * CONFIG.azimuthPixels;
+        const startX = -totalLength / 2;
+        const satX = startX + azIdx * dx;
+        
+        STATE.satPos.x = satX;
+
+        const tNow = STATE.pulseIndex / CONFIG.prf;
+        const lambda = CONFIG.lambda;
+        const R_c = Math.sqrt(Math.pow(CONFIG.groundRangeCenter, 2) + Math.pow(CONFIG.satAlt, 2));
+
+        STATE.targets.forEach(t => {
+            // Stationary targets (vx=0, vy=0)
+            const x_t = t.x;
+            const y_t = t.y;
+
+            const dist = Math.sqrt(Math.pow(x_t - satX, 2) + Math.pow(y_t, 2) + Math.pow(CONFIG.satAlt, 2));
+            
+            // Two-way phase
+            const phi = -4 * Math.PI * dist / lambda;
+
+            // Range Binning
+            const rangeWindow = 200; 
+            const bin = Math.floor( ((dist - R_c) + rangeWindow/2) / rangeWindow * CONFIG.rangePixels );
+
+            if (bin >= 0 && bin < CONFIG.rangePixels) {
+                // Antenna Pattern (Simulated Gaussian Beam)
+                const beamWidth = 75; 
+                const azDiff = x_t - satX;
+                const amp = Math.exp(-Math.pow(azDiff/beamWidth, 2));
+
+                if (amp > 0.01) {
+                    const signal = C.mul({re:amp, im:0}, C.exp(phi));
+                    STATE.raw[azIdx][bin] = C.add(STATE.raw[azIdx][bin], signal);
+                }
+            }
+        });
+
+        STATE.pulseIndex++;
+
+        const pct = (STATE.pulseIndex / CONFIG.azimuthPixels) * 100;
+        document.getElementById('progress-bar').style.width = pct + '%';
+        
+        // Redraw scene to show movement
+        drawScene();
+        
+        // Update the SAR image in real-time
+        processRDA();
+    }
+
+    function finishCollection() {
+        STATE.isCollecting = false;
+        document.getElementById('btn-collect').disabled = false;
+        togglePrfButtons(true);
+        processRDA();
+    }
+
+    function togglePrfButtons(enabled) {
+        document.getElementById('btn-prf-normal').disabled = !enabled;
+        document.getElementById('btn-prf-low').disabled = !enabled;
+    }
+
+    /**
+     * RDA PROCESSING
+     */
+    function processRDA() {
+        const azPixels = CONFIG.azimuthPixels;
+        const rangePixels = CONFIG.rangePixels;
+        const matchedFilter = STATE.matchedFilter;
+        if (!matchedFilter) return; 
+
+        // Final Image Buffer
+        const imgOut = Array(azPixels).fill(null).map(() => Array(rangePixels).fill(C.zero()));
+
+        // Process each Range Bin independently (Range Doppler Algorithm simplified)
+        for (let r = 0; r < rangePixels; r++) {
+            const azLine = [];
+            for (let a = 0; a < azPixels; a++) azLine.push(STATE.raw[a][r]);
+
+            // 1. FFT -> Azimuth Frequency Domain
+            const spec = fftShift(fft(azLine));
+
+            // 2. Compression (Matched Filter)
+            const comp = spec.map((val, k) => C.mul(val, matchedFilter[k]));
+            
+            // 3. IFFT -> Focused Image
+            const imgLine = ifft(fftShift(comp)); 
+            
+            // Store
+            for (let a = 0; a < azPixels; a++) imgOut[a][r] = imgLine[a];
+        }
+
+        STATE.img = imgOut;
+        renderResults();
+    }
+
+    /**
+     * VISUALIZATION & UI
+     */
+    const ctxScene = document.getElementById('canvas-scene').getContext('2d');
+    const ctxSar = document.getElementById('canvas-sar').getContext('2d');
+
+    function drawScene() {
+        const w = ctxScene.canvas.width;
+        const h = ctxScene.canvas.height;
+        ctxScene.clearRect(0,0,w,h);
+
+        const cx = w/2;
+        const cy = h/2;
+        const scale = 0.9; 
+
+        // Sat Track
+        const sx = cx + STATE.satPos.x * scale;
+        const sy = 40;
+        ctxScene.strokeStyle = 'rgba(56, 189, 248, 0.5)';
+        ctxScene.setLineDash([5, 5]);
+        ctxScene.beginPath(); ctxScene.moveTo(0, sy); ctxScene.lineTo(w, sy); ctxScene.stroke();
+        ctxScene.setLineDash([]);
+        
+        // Single Radar Platform
+        ctxScene.fillStyle = '#38bdf8';
+        ctxScene.shadowBlur = 10;
+        ctxScene.shadowColor = '#38bdf8';
+        ctxScene.beginPath(); ctxScene.arc(sx, sy, 5, 0, Math.PI*2); ctxScene.fill();
+        ctxScene.shadowBlur = 0;
+
+        // Beam
+        const beamW = 75 * 2 * scale; 
+        const sceneRangeH = CONFIG.sceneWidth * scale; 
+        const px1 = sx - beamW/2;
+        const px2 = sx + beamW/2;
+        const py1 = cy - sceneRangeH/2;
+        const py2 = cy + sceneRangeH/2;
+
+        ctxScene.fillStyle = 'rgba(251, 191, 36, 0.15)'; 
+        ctxScene.fillRect(px1, py1, beamW, sceneRangeH);
+        ctxScene.strokeStyle = 'rgba(251, 191, 36, 0.3)';
+        ctxScene.strokeRect(px1, py1, beamW, sceneRangeH);
+
+        // Connectors
+        ctxScene.strokeStyle = 'rgba(251, 191, 36, 0.1)';
+        ctxScene.beginPath();
+        ctxScene.moveTo(sx, sy); ctxScene.lineTo(px1, py1);
+        ctxScene.moveTo(sx, sy); ctxScene.lineTo(px2, py1);
+        ctxScene.stroke();
+
+        // Targets
+        const grC = CONFIG.groundRangeCenter;
+        STATE.targets.forEach(t => {
+            const tx = cx + t.x * scale;
+            const ty = cy + (t.y - grC) * scale;
+            ctxScene.fillStyle = t.color;
+            ctxScene.beginPath(); ctxScene.arc(tx, ty, 3, 0, Math.PI*2); ctxScene.fill();
+        });
+    }
+
+    function renderResults() {
+        if (STATE.img.length === 0) return;
+        
+        const ctx = ctxSar;
+        const w = ctx.canvas.width;
+        const h = ctx.canvas.height;
+        const imgData = ctx.createImageData(w, h);
+        
+        const matrix = STATE.img;
+        const rows = matrix.length;
+        const cols = matrix[0].length;
+        
+        const scaleX = w / cols;
+        const scaleY = h / rows;
+
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                // Map screen pixel to matrix index
+                const r = Math.floor(x / scaleX);
+                const a = Math.floor(y / scaleY);
+
+                if(r >= cols || a >= rows) continue;
+
+                const val = matrix[a][r];
+                const mag = C.mag(val);
+                
+                // Log scale for Magnitude visualization
+                // Dynamic range compression
+                let valDisp = 0;
+                if (mag > 0) {
+                     valDisp = Math.log10(mag + 1) * 80;
+                     if (valDisp > 255) valDisp = 255;
+                }
+
+                const idx = (y * w + x) * 4;
+                // Grayscale heatmap
+                imgData.data[idx] = valDisp;     // R
+                imgData.data[idx+1] = valDisp;   // G
+                imgData.data[idx+2] = valDisp;   // B
+                imgData.data[idx+3] = 255;       // Alpha
+            }
+        }
+        ctx.putImageData(imgData, 0, 0);
+        
+        // Add overlay text
+        ctx.fillStyle = "white";
+        ctx.font = "14px monospace";
+        ctx.fillText(`Mode: ${CONFIG.prf < 60 ? "Aliased (Low PRF)" : "Normal (High PRF)"}`, 10, h - 20);
+    }
+
+    // --- UI Handlers ---
+
+    function setPrf(mode) {
+        document.getElementById('btn-prf-normal').classList.remove('active');
+        document.getElementById('btn-prf-low').classList.remove('active');
+        
+        if (mode === 'normal') {
+            CONFIG.prf = 100;
+            document.getElementById('btn-prf-normal').classList.add('active');
+        } else {
+            CONFIG.prf = 40; // Low enough to cause azimuth aliasing (ghosts)
+            document.getElementById('btn-prf-low').classList.add('active');
+        }
+        
+        resetData();
+        drawScene();
+    }
+
+    document.getElementById('btn-prf-normal').addEventListener('click', () => setPrf('normal'));
+    document.getElementById('btn-prf-low').addEventListener('click', () => setPrf('low'));
+
+    document.getElementById('btn-collect').addEventListener('click', () => {
+        resetData();
+        STATE.isCollecting = true;
+        document.getElementById('btn-collect').disabled = true;
+        togglePrfButtons(false);
+        document.getElementById('progress-container').style.display = 'block';
+    });
+
+    const fsBtn = document.getElementById('btn-fullscreen');
+    fsBtn.addEventListener('click', () => {
+        if (!document.fullscreenElement) {
+            document.documentElement.requestFullscreen().catch(err => console.log(err));
+        } else {
+            document.exitFullscreen();
+        }
+    });
+
+    function loop() {
+        if (STATE.isCollecting) runCollectionStep();
+        requestAnimationFrame(loop);
+    }
+    
+    function resize() {
+        const els = [ctxScene.canvas, ctxSar.canvas];
+        els.forEach(c => {
+            const rect = c.parentElement.getBoundingClientRect();
+            c.width = rect.width;
+            c.height = rect.height;
+        });
+        if (STATE.img.length > 0) renderResults();
+        drawScene();
+    }
+    window.addEventListener('resize', resize);
+    
+    // Init
+    resize();
+    resetData(); // Prepares grid and filters
+    drawScene();
+    loop();
+
+})();
+</script>
+</body>
+</html>

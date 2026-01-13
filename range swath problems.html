@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SAR Range Ambiguity</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #020617;
+            color: #e2e8f0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .container {
+            display: flex;
+            flex-direction: row;
+            justify-content: center;
+            align-items: center;
+            gap: 20px;
+            width: 100%;
+            height: 100%;
+            padding-bottom: 60px; /* Space for legend */
+            box-sizing: border-box;
+        }
+
+        .panel {
+            position: relative;
+            background: #000;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.8);
+            width: 45vh; 
+            height: 85vh; /* Slightly taller to fit timeline */
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .panel-header {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 40px;
+            background: rgba(15, 23, 42, 0.9);
+            backdrop-filter: blur(4px);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #334155;
+            padding: 0 15px;
+            box-sizing: border-box;
+            z-index: 10;
+        }
+
+        .status {
+            font-size: 0.7em;
+            font-weight: 700;
+            text-transform: uppercase;
+            padding: 3px 6px;
+            border-radius: 3px;
+        }
+
+        .status.ok { background-color: rgba(6, 78, 59, 0.8); color: #34d399; border: 1px solid #059669; }
+        .status.warn { background-color: rgba(69, 10, 10, 0.8); color: #fca5a5; border: 1px solid #b91c1c; }
+
+        canvas {
+            display: block;
+            background-color: #000000;
+            width: 100%;
+            height: 100%;
+        }
+
+        .legend {
+            position: absolute;
+            bottom: 15px;
+            display: flex;
+            gap: 20px;
+            font-size: 0.8em;
+            justify-content: center;
+            color: #cbd5e1;
+            background: rgba(15, 23, 42, 0.9);
+            padding: 10px 20px;
+            border-radius: 20px;
+            border: 1px solid #334155;
+            z-index: 20;
+        }
+        .legend-item { display: flex; align-items: center; gap: 6px; }
+        .dot { width: 10px; height: 10px; border-radius: 50%; }
+        
+        #fs-btn {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 100;
+            background: rgba(15, 23, 42, 0.9);
+            color: #94a3b8;
+            border: 1px solid #334155;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 0.85em;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+        #fs-btn:hover {
+            background: #1e293b;
+            color: #e2e8f0;
+            border-color: #475569;
+        }
+
+        @keyframes pulse-red {
+            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+            50% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+        .status.warn { animation: pulse-red 2s infinite; }
+
+    </style>
+</head>
+<body>
+
+    <button id="fs-btn">Full Screen</button>
+
+    <div class="container">
+        <!-- Wide Beam Panel -->
+        <div class="panel">
+            <div class="panel-header">
+                <span style="font-size: 0.9em; font-weight: 600;">Wide Swath</span>
+                <span id="status-wide" class="status ok">Clear</span>
+            </div>
+            <canvas id="canvas-wide"></canvas>
+        </div>
+
+        <!-- Narrow Beam Panel -->
+        <div class="panel">
+            <div class="panel-header">
+                <span style="font-size: 0.9em; font-weight: 600;">Narrow Swath</span>
+                <span id="status-narrow" class="status ok">Clear</span>
+            </div>
+            <canvas id="canvas-narrow"></canvas>
+        </div>
+    </div>
+
+    <div class="legend">
+        <div class="legend-item"><div class="dot" style="background: #facc15;"></div>Tx Pulse</div>
+        <div class="legend-item"><div class="dot" style="background: #0ea5e9;"></div>Rx Amplitude</div>
+        <div class="legend-item"><div class="dot" style="background: #ef4444;"></div>Ambiguity</div>
+    </div>
+
+<script>
+/**
+ * Configuration
+ */
+const CONFIG = {
+    // Internal Logical Coordinates
+    width: 450,
+    height: 750, 
+    
+    satX: 50,           
+    satY: 60,           
+    
+    // Ground position
+    groundStart: { x: 0, y: 450 }, 
+    groundEnd: { x: 450, y: 500 }, 
+    
+    pulseSpeed: 0.8,      
+    pulseWidth: 12,       
+    
+    maxRange: 800,        
+    
+    numScatterers: 70,    
+    waveLife: 600,
+    
+    timelineHeight: 100 // Height reserved at bottom for graph
+};
+
+// Full Screen Logic
+const fsBtn = document.getElementById('fs-btn');
+
+fsBtn.addEventListener('click', () => {
+    if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(err => {
+            console.log(`Error attempting to enable full-screen mode: ${err.message}`);
+        });
+    }
+});
+
+document.addEventListener('fullscreenchange', () => {
+    if (document.fullscreenElement) {
+        fsBtn.style.display = 'none';
+    } else {
+        fsBtn.style.display = 'block';
+    }
+});
+
+
+// Pre-calculate scatter points
+const SCATTERERS = [];
+const dx = CONFIG.groundEnd.x - CONFIG.groundStart.x;
+const dy = CONFIG.groundEnd.y - CONFIG.groundStart.y;
+
+for(let i=0; i<CONFIG.numScatterers; i++) {
+    let t = i / (CONFIG.numScatterers - 1);
+    let x = CONFIG.groundStart.x + dx * t;
+    let y = CONFIG.groundStart.y + dy * t;
+    
+    let vx = x - CONFIG.satX;
+    let vy = y - CONFIG.satY;
+    let dist = Math.sqrt(vx*vx + vy*vy);
+    let angle = Math.atan2(vy, vx);
+
+    SCATTERERS.push({ x, y, dist, angle });
+}
+
+class RadarSimulation {
+    constructor(canvasId, beamWidthDegrees, statusId, prfPeriod) {
+        this.canvas = document.getElementById(canvasId);
+        this.ctx = this.canvas.getContext('2d', { alpha: false });
+        this.statusEl = document.getElementById(statusId);
+        this.prfPeriod = prfPeriod; // Unique PRF for each sim
+        
+        this.resize();
+        window.addEventListener('resize', () => this.resize());
+        
+        this.beamWidth = beamWidthDegrees * (Math.PI / 180);
+        
+        const midX = (CONFIG.groundStart.x + CONFIG.groundEnd.x) / 2;
+        const midY = (CONFIG.groundStart.y + CONFIG.groundEnd.y) / 2;
+        this.beamDirection = Math.atan2(midY - CONFIG.satY, midX - CONFIG.satX);
+
+        this.pulses = []; 
+        this.scatterWaves = []; 
+        this.frameCount = 0;
+        this.timelineHistory = [];
+        this.isAmbiguous = false;
+    }
+    
+    resize() {
+        this.canvas.width = CONFIG.width;
+        this.canvas.height = CONFIG.height;
+    }
+
+    update() {
+        this.frameCount++;
+
+        // 1. Fire Pulse using instance PRF period
+        if (this.frameCount % this.prfPeriod === 0) {
+            this.pulses.push({ r: 0, id: this.frameCount });
+        }
+
+        // 2. Update Transmit Pulses
+        for (let i = this.pulses.length - 1; i >= 0; i--) {
+            let p = this.pulses[i];
+            p.r += CONFIG.pulseSpeed;
+            this.checkScatterTriggers(p);
+            if (p.r > CONFIG.maxRange + 100) this.pulses.splice(i, 1);
+        }
+
+        // 3. Update Scatter Waves
+        for (let i = this.scatterWaves.length - 1; i >= 0; i--) {
+            let w = this.scatterWaves[i];
+            w.r += CONFIG.pulseSpeed;
+            if (w.r > CONFIG.waveLife) this.scatterWaves.splice(i, 1);
+        }
+
+        this.updateTimeline();
+    }
+
+    checkScatterTriggers(pulse) {
+        for (let i = 0; i < SCATTERERS.length; i++) {
+            let s = SCATTERERS[i];
+            let angleDiff = Math.abs(s.angle - this.beamDirection);
+            if (angleDiff > this.beamWidth/2) continue;
+
+            if (pulse.r >= s.dist && pulse.r < s.dist + CONFIG.pulseSpeed) {
+                this.scatterWaves.push({
+                    x: s.x,
+                    y: s.y,
+                    r: 0,
+                    startDist: s.dist, 
+                    intensity: 1.0     
+                });
+            }
+        }
+    }
+
+    updateTimeline() {
+        // Calculate Signal strength at Satellite
+        let rxPower = 0;
+        for (let w of this.scatterWaves) {
+            let distToSat = w.startDist; 
+            // If the wave is currently passing back over the sat (within pulse width tolerance)
+            if (Math.abs(w.r - distToSat) < CONFIG.pulseWidth/2) {
+                rxPower += 0.4; // Accumulate amplitude
+            }
+        }
+        
+        // Check Tx State
+        let txPower = 0;
+        for(let p of this.pulses) {
+            if (p.r < CONFIG.pulseWidth * 2) txPower = 1;
+        }
+
+        // Determine State
+        let state = 0; // 0: Silence
+        if (txPower > 0 && rxPower > 0.1) state = 3; // Ambiguity (Tx + Rx)
+        else if (txPower > 0) state = 1; // Tx
+        else if (rxPower > 0.01) state = 2; // Rx
+
+        // Update UI Text
+        this.isAmbiguous = (state === 3);
+        if (this.isAmbiguous) {
+            this.statusEl.innerText = "ECLIPSE / AMBIGUITY";
+            this.statusEl.className = "status warn";
+        } else {
+            this.statusEl.innerText = "Clear";
+            this.statusEl.className = "status ok";
+        }
+
+        // Store History
+        this.timelineHistory.push({ state, rxVal: rxPower });
+        if(this.timelineHistory.length > CONFIG.width) this.timelineHistory.shift();
+    }
+
+    draw() {
+        this.ctx.globalCompositeOperation = 'source-over';
+        this.ctx.fillStyle = '#000000';
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+        // 1. Draw Beam Cone
+        this.ctx.save();
+        this.ctx.translate(CONFIG.satX, CONFIG.satY);
+        this.ctx.beginPath();
+        this.ctx.moveTo(0,0);
+        this.ctx.arc(0, 0, 900, this.beamDirection - this.beamWidth/2, this.beamDirection + this.beamWidth/2);
+        this.ctx.fillStyle = 'rgba(20, 30, 50, 0.5)'; 
+        this.ctx.fill();
+        this.ctx.restore();
+
+        // 2. Draw Ground
+        this.ctx.fillStyle = '#334155';
+        for(let s of SCATTERERS) {
+            this.ctx.fillRect(s.x-1, s.y-1, 2, 2);
+        }
+
+        // 3. Draw Transmit Pulses
+        this.ctx.strokeStyle = 'rgba(250, 204, 21, 0.6)';
+        this.ctx.lineWidth = 2;
+        for (let p of this.pulses) {
+            if(p.r <= 0) continue;
+            this.ctx.beginPath();
+            this.ctx.arc(CONFIG.satX, CONFIG.satY, p.r, 
+                this.beamDirection - this.beamWidth/2, 
+                this.beamDirection + this.beamWidth/2
+            );
+            this.ctx.stroke();
+            
+            this.ctx.beginPath();
+            let innerR = Math.max(0, p.r - CONFIG.pulseWidth);
+            this.ctx.arc(CONFIG.satX, CONFIG.satY, p.r, 
+                this.beamDirection - this.beamWidth/2, 
+                this.beamDirection + this.beamWidth/2
+            );
+            this.ctx.arc(CONFIG.satX, CONFIG.satY, innerR, 
+                this.beamDirection + this.beamWidth/2, 
+                this.beamDirection - this.beamWidth/2,
+                true 
+            );
+            this.ctx.fillStyle = 'rgba(250, 204, 21, 0.1)';
+            this.ctx.fill();
+        }
+
+        // 4. Draw Scattered Waves (Heatmap)
+        this.ctx.globalCompositeOperation = 'lighter';
+        this.ctx.lineWidth = 1.5;
+
+        for (let w of this.scatterWaves) {
+            let alpha = (1.0 - (w.r / CONFIG.waveLife)) * w.intensity;
+            if (alpha <= 0) continue;
+
+            this.ctx.beginPath();
+            this.ctx.arc(w.x, w.y, w.r, 0, Math.PI * 2);
+            this.ctx.strokeStyle = `rgba(0, 100, 255, ${alpha * 0.3})`;
+            this.ctx.stroke();
+        }
+        
+        // 5. Draw Satellite
+        this.ctx.globalCompositeOperation = 'source-over';
+        this.ctx.fillStyle = '#e2e8f0';
+        this.ctx.beginPath();
+        this.ctx.arc(CONFIG.satX, CONFIG.satY, 6, 0, Math.PI*2);
+        this.ctx.fill();
+
+        // 6. Draw Timeline
+        this.drawTimeline();
+    }
+
+    drawTimeline() {
+        const h = CONFIG.timelineHeight;
+        const yBase = CONFIG.height - h;
+        const graphY = yBase + 20; // Padding for title
+        const maxBarH = h - 25;
+
+        // Background
+        this.ctx.fillStyle = '#020617';
+        this.ctx.fillRect(0, yBase, CONFIG.width, h);
+        
+        // Border
+        this.ctx.strokeStyle = '#334155';
+        this.ctx.lineWidth = 1;
+        this.ctx.beginPath();
+        this.ctx.moveTo(0, yBase);
+        this.ctx.lineTo(CONFIG.width, yBase);
+        this.ctx.stroke();
+
+        // Label
+        this.ctx.fillStyle = '#94a3b8';
+        this.ctx.font = '11px sans-serif';
+        this.ctx.fillText("Antenna Channel (Rx Amplitude vs Time)", 10, yBase + 15);
+
+        // Draw Graph
+        const barWidth = 1; 
+        
+        for (let i = 0; i < this.timelineHistory.length; i++) {
+            let item = this.timelineHistory[i];
+            let x = i * barWidth;
+            
+            // Draw Rx (Blue) - height based on amplitude
+            if (item.rxVal > 0.01) {
+                // Clamp max height
+                let barH = Math.min(item.rxVal * 15, maxBarH); 
+                
+                // Color: simple Blue
+                this.ctx.fillStyle = '#0ea5e9'; 
+                this.ctx.fillRect(x, CONFIG.height - barH, barWidth, barH);
+            }
+
+            // Draw Tx (Yellow) or Ambiguity (Red)
+            // Tx is usually constant amplitude, so fixed height bar
+            if (item.state === 1) { // Tx Only
+                this.ctx.fillStyle = 'rgba(250, 204, 21, 0.9)'; // Yellow
+                this.ctx.fillRect(x, CONFIG.height - maxBarH, barWidth, maxBarH);
+            } else if (item.state === 3) { // Ambiguity (Tx + Rx)
+                this.ctx.fillStyle = '#ef4444'; // Red
+                // Draw full height
+                this.ctx.fillRect(x, CONFIG.height - maxBarH, barWidth, maxBarH);
+            }
+        }
+        
+        // Current Time Line
+        this.ctx.fillStyle = '#ffffff';
+        this.ctx.fillRect(this.timelineHistory.length * barWidth, graphY, 2, maxBarH);
+    }
+}
+
+// Initialize
+// Wide beam uses default 220 PRF (causes mess overlap)
+const wideRadar = new RadarSimulation('canvas-wide', 45, 'status-wide', 220);
+
+// Narrow beam uses 250 PRF (tuned to be perfectly out of phase with the return)
+const narrowRadar = new RadarSimulation('canvas-narrow', 6, 'status-narrow', 250);
+
+function loop() {
+    wideRadar.update();
+    wideRadar.draw();
+    narrowRadar.update();
+    narrowRadar.draw();
+    requestAnimationFrame(loop);
+}
+loop();
+
+</script>
+</body>
+</html>

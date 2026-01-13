@@ -1,0 +1,928 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SAR ATI: RDA Image Formation</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #020617;
+            color: #e2e8f0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            height: 50px;
+            background: rgba(15, 23, 42, 0.95);
+            border-bottom: 1px solid #334155;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+            z-index: 10;
+        }
+        .header h1 { margin: 0; font-size: 1.1rem; color: #38bdf8; display: flex; flex-direction: column; }
+        .header h1 span { font-size: 0.7rem; color: #94a3b8; font-weight: normal; margin-top: 2px; }
+        
+        .controls { display: flex; gap: 8px; align-items: center; }
+        
+        button {
+            background: #1e293b;
+            color: #e2e8f0;
+            border: 1px solid #475569;
+            padding: 4px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.75rem;
+            font-weight: 500;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+        button:hover { background: #334155; border-color: #94a3b8; }
+        button.active { background: #0f172a; border-color: #38bdf8; color: #38bdf8; box-shadow: 0 0 0 1px #38bdf8; }
+        
+        button.primary {
+            background: #0ea5e9;
+            color: white;
+            border: none;
+            font-weight: 600;
+        }
+        button.primary:hover { background: #0284c7; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .separator { width: 1px; height: 20px; background: #334155; margin: 0 5px; }
+
+        /* Speed Controls */
+        .speed-control {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: #1e293b;
+            padding: 2px 8px;
+            border-radius: 4px;
+            border: 1px solid #334155;
+        }
+        .speed-control label { font-size: 0.7rem; color: #94a3b8; }
+        
+        input[type=range] {
+            width: 80px;
+            accent-color: #0ea5e9;
+            height: 4px;
+            background: #475569;
+            border-radius: 2px;
+            appearance: none;
+            outline: none;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            appearance: none;
+            width: 12px;
+            height: 12px;
+            background: #38bdf8;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+        
+        input[type=number] {
+            width: 60px;
+            background: #0f172a;
+            color: #e2e8f0;
+            border: 1px solid #475569;
+            border-radius: 3px;
+            padding: 2px 4px;
+            font-size: 0.75rem;
+            text-align: right;
+        }
+        input[type=number]:focus { outline: 1px solid #38bdf8; border-color: #38bdf8; }
+
+        .progress-container {
+            width: 80px;
+            height: 6px;
+            background: #334155;
+            border-radius: 3px;
+            overflow: hidden;
+            display: none;
+        }
+        .progress-bar {
+            height: 100%;
+            background: #fbbf24;
+            width: 0%;
+            transition: width 0.1s linear;
+        }
+
+        .main-container {
+            flex: 1;
+            display: flex;
+            flex-direction: row;
+            padding: 8px;
+            gap: 8px;
+            height: calc(100% - 50px);
+            box-sizing: border-box;
+        }
+
+        .panel {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            overflow: hidden;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .left-panel { flex: 3; }
+        
+        /* Grid for Right Panel */
+        .right-panel { 
+            flex: 5; 
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: 1fr 1fr 1fr;
+            gap: 8px;
+            background: transparent; 
+            border: none; 
+        }
+
+        .result-box {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 6px;
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .panel-title {
+            position: absolute;
+            top: 4px;
+            left: 4px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 0.7rem;
+            color: #cbd5e1;
+            z-index: 5;
+            pointer-events: none;
+        }
+
+        canvas { display: block; width: 100%; height: 100%; }
+
+        .legend {
+            position: absolute;
+            bottom: 15px;
+            right: 15px;
+            background: rgba(0,0,0,0.8);
+            border: 1px solid #475569;
+            padding: 8px;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            pointer-events: none;
+        }
+        .l-item { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; color: #cbd5e1; }
+        .dot { width: 8px; height: 8px; border-radius: 50%; }
+        .gradient-bar {
+            width: 80px; height: 6px;
+            background: linear-gradient(to right, #dc2626, #000, #2563eb);
+            border-radius: 3px;
+        }
+
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1>SAR ATI <span>RDA Image Formation</span></h1>
+        <div class="controls">
+            <button id="btn-scene-grid" class="active">Grid</button>
+            <button id="btn-scene-single">1 Mover</button>
+            <button id="btn-scene-slow">Slow</button>
+            <button id="btn-scene-fast">Fast</button>
+            <button id="btn-scene-multi">5 Random</button>
+            
+            <div class="separator"></div>
+
+            <div class="speed-control">
+                <label for="input-fast-speed">Speed:</label>
+                <input type="range" id="slider-fast-speed" min="-10" max="10" value="3" title="Speed (m/s)">
+                <input type="number" id="input-fast-speed" min="-10" max="10" value="3" title="Speed (m/s)">
+                <span id="v-amb-display" style="font-size: 0.65rem; color: #94a3b8; margin-left: 6px; border-left: 1px solid #334155; padding-left: 6px;" title="Unambiguous Velocity Range"></span>
+            </div>
+
+            <div class="separator"></div>
+
+            <!-- PRF Toggle Button -->
+            <button id="btn-prf-toggle">PRF: 100Hz</button>
+            
+            <div class="separator"></div>
+            
+            <div class="progress-container" id="progress-container">
+                <div class="progress-bar" id="progress-bar"></div>
+            </div>
+            <button id="btn-collect" class="primary">Start Collection</button>
+            <button id="btn-fullscreen">Full Screen</button>
+        </div>
+    </div>
+
+    <div class="main-container">
+        <!-- Left: 3D Scene -->
+        <div class="panel left-panel">
+            <div class="panel-title">SCENE (Top-Down)</div>
+            <canvas id="canvas-scene"></canvas>
+            
+            <div class="legend">
+                <div class="l-item"><div class="dot" style="background:#64748b"></div> Stationary</div>
+                <div class="l-item"><div class="dot" style="background:#ef4444"></div> Radial Mover</div>
+                <div class="l-item"><div class="dot" style="background:rgba(251, 191, 36, 0.8)"></div> Beam Swath</div>
+            </div>
+        </div>
+
+        <!-- Right: Results Grid -->
+        <div class="right-panel">
+            <!-- Row 1: Front -->
+            <div class="result-box">
+                <div class="panel-title" style="color:#38bdf8">Front Focused (Phase)</div>
+                <canvas id="canvas-rd-front"></canvas>
+            </div>
+            <div class="result-box">
+                <div class="panel-title" style="color:#38bdf8">Front Focused (Magnitude)</div>
+                <canvas id="canvas-slc-front"></canvas>
+            </div>
+            
+            <!-- Row 2: Rear -->
+            <div class="result-box">
+                <div class="panel-title" style="color:#a78bfa">Rear Focused (Phase)</div>
+                <canvas id="canvas-rd-rear"></canvas>
+            </div>
+            <div class="result-box">
+                <div class="panel-title" style="color:#a78bfa">Rear Focused (Magnitude)</div>
+                <canvas id="canvas-slc-rear"></canvas>
+            </div>
+            
+            <!-- Row 3: Interferogram -->
+            <div class="result-box">
+                <div class="panel-title" style="color:#fbbf24">Interferogram (Phase)</div>
+                <canvas id="canvas-rd-inter"></canvas>
+                <div style="position:absolute; bottom:4px; right:4px; background:rgba(0,0,0,0.7); padding:4px; border-radius:4px;">
+                    <div class="gradient-bar" style="width:50px; height:4px;"></div>
+                </div>
+            </div>
+            <div class="result-box">
+                <div class="panel-title" style="color:#fbbf24">Interferogram (Magnitude)</div>
+                <canvas id="canvas-slc-inter"></canvas>
+            </div>
+        </div>
+    </div>
+
+<script>
+(function() {
+
+    /**
+     * CONFIGURATION
+     * EXACTLY AS PROVIDED IN USER SNIPPET
+     */
+    const CONFIG = {
+        fc: 9.65e9,
+        bw: 300e6,
+        lambda: 0.031, 
+        satAlt: 3000, 
+        satVel: 50, 
+        
+        // Sampling
+        azimuthPixels: 256, 
+        rangePixels: 128,   
+        
+        prf: 100, 
+        
+        sceneWidth: 150, 
+        sceneLength: 128, 
+        
+        antennaSpacing: 4, 
+        
+        groundRangeCenter: 3000 * Math.tan(Math.PI/4) 
+    };
+
+    const C_LIGHT = 299792458;
+
+    // Calculate Max Unambiguous Velocity
+    // V_amb = (lambda * V_plat) / (2 * Baseline)
+    // Note: This is the full cycle velocity (2PI phase shift)
+    const vAmb = (CONFIG.lambda * CONFIG.satVel) / (2 * CONFIG.antennaSpacing);
+    
+    // Update UI with calculated V_amb
+    const vAmbDisplay = document.getElementById('v-amb-display');
+    if (vAmbDisplay) {
+        vAmbDisplay.textContent = `V_amb: ~${vAmb.toFixed(3)} m/s`;
+    }
+
+    /**
+     * COMPLEX MATH LIB
+     */
+    const C = {
+        add: (a, b) => ({ re: a.re + b.re, im: a.im + b.im }),
+        mul: (a, b) => ({ re: a.re * b.re - a.im * b.im, im: a.re * b.im + a.im * b.re }),
+        conj: (a) => ({ re: a.re, im: -a.im }),
+        mag: (a) => Math.sqrt(a.re * a.re + a.im * a.im),
+        phase: (a) => Math.atan2(a.im, a.re),
+        exp: (phi) => ({ re: Math.cos(phi), im: Math.sin(phi) }),
+        zero: () => ({ re: 0, im: 0 })
+    };
+
+    /**
+     * FFT Implementation
+     */
+    function fft(input) {
+        const N = input.length;
+        if (N <= 1) return input;
+        const even = fft(input.filter((_, i) => i % 2 === 0));
+        const odd  = fft(input.filter((_, i) => i % 2 === 1));
+        const output = new Array(N);
+        for (let k = 0; k < N / 2; k++) {
+            const angle = -2 * Math.PI * k / N;
+            const t = C.mul({ re: Math.cos(angle), im: Math.sin(angle) }, odd[k]);
+            output[k] = C.add(even[k], t);
+            output[k + N / 2] = C.add(even[k], C.mul({re:-1, im:0}, t)); 
+        }
+        return output;
+    }
+
+    function ifft(input) {
+        const N = input.length;
+        const conjInput = input.map(v => C.conj(v));
+        const f = fft(conjInput);
+        return f.map(v => {
+            const c = C.conj(v);
+            return { re: c.re / N, im: c.im / N };
+        });
+    }
+
+    function fftShift(arr) {
+        const N = arr.length;
+        const half = Math.floor(N/2);
+        return [...arr.slice(half), ...arr.slice(0, half)];
+    }
+
+    /**
+     * SIMULATION STATE
+     */
+    const STATE = {
+        isCollecting: false,
+        pulseIndex: 0,
+        frameThrottle: 0, 
+        currentMode: 'grid', 
+        
+        rawFront: [],
+        rawRear: [],
+        
+        // Final Spatial Image Buffers
+        imgFront: [],
+        imgRear: [],
+        imgInter: [],
+        
+        matchedFilter: null,
+        satPos: { x: -CONFIG.sceneLength/2, y: 0, z: CONFIG.satAlt }, 
+        targets: [] 
+    };
+
+    function generateTargets(mode) {
+        const targets = [];
+        const grCenter = CONFIG.groundRangeCenter;
+        
+        // 1. Grid (Stationary) - Matches user snippet
+        const rows = 5; 
+        const cols = 5;
+        const widthX = 70; 
+        const widthY = 80;
+        const spacingX = widthX / (rows - 1);
+        const spacingY = widthY / (cols - 1);
+
+        for(let i=0; i<rows; i++) {
+            for(let j=0; j<cols; j++) {
+                targets.push({
+                    id: `s_${i}_${j}`,
+                    x: (-widthX/2) + spacingX * i,
+                    y: (grCenter - widthY/2) + spacingY * j,
+                    z: 0,
+                    vx: 0, vy: 0,
+                    color: '#64748b'
+                });
+            }
+        }
+
+        // 2. Movers
+        if (mode === 'single') {
+            // Normal: 0.2 m/s -> ~17m shift, distinct phase
+            targets.push({ id: 'm_rad', x: 0, y: grCenter, z: 0, vx: 0, vy: 0.2, color: '#ef4444' });
+        } else if (mode === 'slow') {
+            // Slow: 0.0005 m/s (0.5 mm/s) - blends into clutter
+            targets.push({ id: 'm_slow', x: 0, y: grCenter, z: 0, vx: 0, vy: 0.0005, color: '#ef4444' });
+        } else if (mode === 'fast') {
+            // Fast: Speed controlled by inputs
+            // FIX: explicitly check for NaN, do not use logical OR which treats 0 as false
+            const rawVal = document.getElementById('input-fast-speed').value;
+            let inputSpeed = parseFloat(rawVal);
+            if (isNaN(inputSpeed)) inputSpeed = 3; 
+
+            // vy is Radial velocity (Ground Range direction)
+            targets.push({ id: 'm_fast', x: 0, y: grCenter, z: 0, vx: 0, vy: inputSpeed, color: '#ef4444' });
+        } else if (mode === 'multi') {
+            const colors = ['#fbbf24', '#f59e0b', '#d97706', '#ef4444', '#10b981'];
+            for(let k=0; k<5; k++) {
+                const vx = (Math.random() - 0.5) * 2; 
+                // Unambiguous: keep within +/- 0.15 m/s (v_amb is ~0.19)
+                const vy = (Math.random() - 0.5) * 0.3; 
+                targets.push({ id: `m_${k}`, x: (Math.random()-0.5)*40, y: grCenter+(Math.random()-0.5)*40, z: 0, vx: vx, vy: vy, color: colors[k] });
+            }
+        }
+        
+        STATE.targets = targets;
+    }
+
+    function precomputeMatchedFilter() {
+        const R_ref = Math.sqrt(Math.pow(CONFIG.groundRangeCenter, 2) + Math.pow(CONFIG.satAlt, 2));
+        const Ka = (2 * Math.pow(CONFIG.satVel, 2)) / (CONFIG.lambda * R_ref);
+        const azPixels = CONFIG.azimuthPixels;
+        const prf = CONFIG.prf;
+
+        const mf = [];
+        for (let k = 0; k < azPixels; k++) {
+            const f = (k - azPixels/2) * (prf / azPixels);
+            const phase = Math.PI * Math.pow(f, 2) / Ka;
+            mf.push(C.exp(-phase)); 
+        }
+        STATE.matchedFilter = mf;
+    }
+
+    function resetData() {
+        const az = CONFIG.azimuthPixels;
+        const rng = CONFIG.rangePixels;
+        
+        STATE.rawFront = Array(az).fill(null).map(() => Array(rng).fill(C.zero()));
+        STATE.rawRear = Array(az).fill(null).map(() => Array(rng).fill(C.zero()));
+        
+        STATE.imgFront = []; STATE.imgRear = []; STATE.imgInter = [];
+        
+        STATE.satPos.x = -CONFIG.sceneLength/2;
+        STATE.pulseIndex = 0;
+        
+        // Clear all canvases
+        const canvases = [
+            'canvas-rd-front', 'canvas-slc-front', 
+            'canvas-rd-rear', 'canvas-slc-rear', 
+            'canvas-rd-inter', 'canvas-slc-inter'
+        ];
+        
+        canvases.forEach(id => {
+            const c = document.getElementById(id);
+            const ctx = c.getContext('2d');
+            ctx.clearRect(0,0, c.width, c.height);
+        });
+
+        document.getElementById('progress-bar').style.width = '0%';
+        
+        generateTargets(STATE.currentMode);
+        
+        // Always recompute if Matched Filter is null (force update for PRF change)
+        if (!STATE.matchedFilter) precomputeMatchedFilter();
+    }
+
+    /**
+     * PHYSICS ENGINE
+     */
+    function runCollectionStep() {
+        if (STATE.frameThrottle < 3) {
+            STATE.frameThrottle++;
+            return;
+        }
+        STATE.frameThrottle = 0;
+
+        if (STATE.pulseIndex >= CONFIG.azimuthPixels) {
+            finishCollection();
+            return;
+        }
+
+        const azIdx = STATE.pulseIndex;
+        // FIX: Azimuth resolution d_az = velocity / PRF.
+        // This ensures the physics engine moves the satellite the correct distance per pulse
+        // regardless of the PRF selected.
+        const d_az = CONFIG.satVel / CONFIG.prf;
+        
+        // FIX: Center the satellite track relative to the middle of the aperture
+        // so the target stays centered in the beam.
+        const satX = (azIdx - CONFIG.azimuthPixels/2) * d_az;
+        STATE.satPos.x = satX;
+
+        const tNow = STATE.pulseIndex / CONFIG.prf;
+        const lag = CONFIG.antennaSpacing / CONFIG.satVel;
+        const lambda = CONFIG.lambda;
+        const R_c = Math.sqrt(Math.pow(CONFIG.groundRangeCenter, 2) + Math.pow(CONFIG.satAlt, 2));
+
+        STATE.targets.forEach(t => {
+            const x_f = t.x + t.vx * tNow;
+            const y_f = t.y + t.vy * tNow;
+            const x_r = t.x + t.vx * (tNow - lag);
+            const y_r = t.y + t.vy * (tNow - lag);
+
+            const dFront = Math.sqrt(Math.pow(x_f - satX, 2) + Math.pow(y_f, 2) + Math.pow(CONFIG.satAlt, 2));
+            const dRear  = Math.sqrt(Math.pow(x_r - satX, 2) + Math.pow(y_r, 2) + Math.pow(CONFIG.satAlt, 2));
+
+            const phiFront = -4 * Math.PI * dFront / lambda;
+            const phiRear  = -4 * Math.PI * dRear  / lambda;
+
+            const rangeWindow = 200; 
+            const bin = Math.floor( ((dFront - R_c) + rangeWindow/2) / rangeWindow * CONFIG.rangePixels );
+
+            if (bin >= 0 && bin < CONFIG.rangePixels) {
+                const beamWidth = 75; 
+                const azDiff = x_f - satX;
+                const amp = Math.exp(-Math.pow(azDiff/beamWidth, 2));
+
+                if (amp > 0.01) {
+                    const sigFront = C.mul({re:amp, im:0}, C.exp(phiFront));
+                    const sigRear  = C.mul({re:amp, im:0}, C.exp(phiRear));
+                    
+                    STATE.rawFront[azIdx][bin] = C.add(STATE.rawFront[azIdx][bin], sigFront);
+                    STATE.rawRear[azIdx][bin]  = C.add(STATE.rawRear[azIdx][bin],  sigRear);
+                }
+            }
+        });
+
+        STATE.pulseIndex++;
+        const pct = (STATE.pulseIndex / CONFIG.azimuthPixels) * 100;
+        document.getElementById('progress-bar').style.width = pct + '%';
+
+        processRDA();
+    }
+
+    function finishCollection() {
+        STATE.isCollecting = false;
+        document.getElementById('btn-collect').disabled = false;
+        enableSceneButtons(true);
+        processRDA();
+    }
+
+    /**
+     * RDA PROCESSING
+     */
+    function processRDA() {
+        const azPixels = CONFIG.azimuthPixels;
+        const rangePixels = CONFIG.rangePixels;
+        const matchedFilter = STATE.matchedFilter;
+        if (!matchedFilter) return; 
+
+        // Buffers for Final Spatial Images
+        const imgFront  = Array(azPixels).fill(null).map(() => Array(rangePixels).fill(C.zero()));
+        const imgRear   = Array(azPixels).fill(null).map(() => Array(rangePixels).fill(C.zero()));
+
+        const processChannel = (rawData, imgOut) => {
+            for (let r = 0; r < rangePixels; r++) {
+                const azLine = [];
+                for (let a = 0; a < azPixels; a++) azLine.push(rawData[a][r]);
+
+                // 1. FFT -> Range Doppler Domain
+                const spec = fftShift(fft(azLine));
+
+                // 2. Compression (Matched Filter)
+                const comp = spec.map((val, k) => C.mul(val, matchedFilter[k]));
+                
+                // 3. IFFT -> Spatial Image
+                const imgLine = ifft(fftShift(comp)); 
+                
+                // Store Focused Image
+                for (let a = 0; a < azPixels; a++) imgOut[a][r] = imgLine[a];
+            }
+        };
+
+        processChannel(STATE.rawFront, imgFront);
+        processChannel(STATE.rawRear, imgRear);
+
+        STATE.imgFront = imgFront;
+        STATE.imgRear = imgRear;
+
+        computeInterferogram();
+        renderResults();
+    }
+
+    function computeInterferogram() {
+        const rows = CONFIG.azimuthPixels;
+        const cols = CONFIG.rangePixels;
+        
+        STATE.imgInter = Array(rows).fill(null).map(() => Array(cols).fill(C.zero()));
+
+        for(let y=0; y<rows; y++){
+            for(let x=0; x<cols; x++){
+                // Spatial Interf: S1 * conj(S2)
+                const iF = STATE.imgFront[y][x];
+                const iR = STATE.imgRear[y][x];
+                STATE.imgInter[y][x] = C.mul(iF, C.conj(iR));
+            }
+        }
+    }
+
+
+    /**
+     * VISUALIZATION & UI
+     */
+    const ctxScene = document.getElementById('canvas-scene').getContext('2d');
+    
+    // Result Contexts (Modified Mapping: Left=Phase, Right=Mag)
+    const ctxRdFront = document.getElementById('canvas-rd-front').getContext('2d'); // Front Phase
+    const ctxSlcFront = document.getElementById('canvas-slc-front').getContext('2d'); // Front Mag
+    const ctxRdRear = document.getElementById('canvas-rd-rear').getContext('2d'); // Rear Phase
+    const ctxSlcRear = document.getElementById('canvas-slc-rear').getContext('2d'); // Rear Mag
+    const ctxRdInter = document.getElementById('canvas-rd-inter').getContext('2d'); // Inter Phase
+    const ctxSlcInter = document.getElementById('canvas-slc-inter').getContext('2d'); // Inter Mag
+
+    function drawScene() {
+        const w = ctxScene.canvas.width;
+        const h = ctxScene.canvas.height;
+        ctxScene.clearRect(0,0,w,h);
+
+        const cx = w/2;
+        const cy = h/2;
+        
+        // Dynamic scale to fill the canvas (Scene is approx 150m wide)
+        // Using 180 divisor gives some padding
+        const scale = Math.min(w, h) / 180; 
+
+        // Current time in simulation
+        const tNow = STATE.pulseIndex / CONFIG.prf;
+
+        // Sat Track
+        const sx = cx + STATE.satPos.x * scale;
+        const sy = 30;
+        ctxScene.strokeStyle = 'rgba(56, 189, 248, 0.5)';
+        ctxScene.setLineDash([5, 5]);
+        ctxScene.beginPath(); ctxScene.moveTo(0, sy); ctxScene.lineTo(w, sy); ctxScene.stroke();
+        ctxScene.setLineDash([]);
+        
+        // Antennas
+        const dotSpacing = 8;
+        ctxScene.fillStyle = '#a78bfa';
+        ctxScene.beginPath(); ctxScene.arc(sx - dotSpacing, sy, 3, 0, Math.PI*2); ctxScene.fill();
+        ctxScene.fillStyle = '#fbbf24';
+        ctxScene.beginPath(); ctxScene.arc(sx, sy, 3, 0, Math.PI*2); ctxScene.fill();
+        ctxScene.fillStyle = '#38bdf8';
+        ctxScene.beginPath(); ctxScene.arc(sx + dotSpacing, sy, 3, 0, Math.PI*2); ctxScene.fill();
+
+        // Beam
+        const beamW = 75 * 2 * scale; // Approx footprint visually
+        const sceneRangeH = CONFIG.sceneWidth * scale; 
+        const px1 = sx - beamW/2;
+        const px2 = sx + beamW/2;
+        const py1 = cy - sceneRangeH/2;
+        const py2 = cy + sceneRangeH/2;
+
+        ctxScene.fillStyle = 'rgba(251, 191, 36, 0.2)'; 
+        ctxScene.fillRect(px1, py1, beamW, sceneRangeH);
+        ctxScene.strokeStyle = 'rgba(251, 191, 36, 0.4)';
+        ctxScene.strokeRect(px1, py1, beamW, sceneRangeH);
+
+        // Connectors
+        ctxScene.strokeStyle = 'rgba(251, 191, 36, 0.1)';
+        ctxScene.beginPath();
+        ctxScene.moveTo(sx, sy); ctxScene.lineTo(px1, py1);
+        ctxScene.moveTo(sx, sy); ctxScene.lineTo(px2, py1);
+        ctxScene.stroke();
+
+        // Targets
+        const grC = CONFIG.groundRangeCenter;
+        STATE.targets.forEach(t => {
+            // Calculate current position based on time
+            const curX = t.x + t.vx * tNow;
+            const curY = t.y + t.vy * tNow;
+
+            const tx = cx + curX * scale;
+            const ty = cy + (curY - grC) * scale;
+            
+            ctxScene.fillStyle = t.color;
+            ctxScene.beginPath(); ctxScene.arc(tx, ty, 3, 0, Math.PI*2); ctxScene.fill();
+        });
+    }
+
+    function renderMatrix(ctx, matrix, type) {
+        const w = ctx.canvas.width;
+        const h = ctx.canvas.height;
+        const imgData = ctx.createImageData(w, h);
+        const rows = matrix.length;
+        const cols = matrix[0].length;
+        const scaleX = w / cols;
+        const scaleY = h / rows;
+
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                const r = Math.floor(x / scaleX);
+                const a = Math.floor(y / scaleY);
+
+                if(r >= cols || a >= rows) continue;
+
+                const val = matrix[a][r];
+                let color = {r:0, g:0, b:0};
+
+                const mag = C.mag(val);
+                
+                if (type === 'mag') {
+                    // Log Magnitude
+                    if (mag > 0.5) {
+                        let bright = Math.log10(mag + 1) * 80; 
+                        bright = Math.min(255, bright);
+                        color = {r:bright, g:bright, b:bright};
+                    }
+                } else if (type === 'phase') {
+                    if (mag > 0.5) { // Threshold
+                        const ph = C.phase(val); 
+                        const norm = ph / Math.PI;
+                        
+                        // Strict Black for small phase in INTERFEROGRAMs
+                        const isInter = ctx.canvas.id.includes('inter');
+                        
+                        // Dead zone adjusted to 0.03 per request
+                        if (isInter && Math.abs(norm) < 0.03) {
+                            color = {r:0, g:0, b:0};
+                        } else {
+                            // Brighter base
+                            const bright = Math.min(255, Math.log10(mag+1)*150);
+                            
+                            if (norm < 0) {
+                                // Swapped: Negative Phase is now RED (was Blue)
+                                const intensity = Math.abs(norm); 
+                                color = { r: bright * (0.3 + 0.7*intensity), g:0, b:0 }; 
+                            } else {
+                                // Swapped: Positive Phase is now BLUE (was Red)
+                                const intensity = Math.abs(norm);
+                                color = { r:0, g: 0, b: bright * (0.3 + 0.7*intensity) }; 
+                            }
+                        }
+                    }
+                }
+
+                const idx = (y * w + x) * 4;
+                imgData.data[idx] = color.r;
+                imgData.data[idx+1] = color.g;
+                imgData.data[idx+2] = color.b;
+                imgData.data[idx+3] = 255;
+            }
+        }
+        ctx.putImageData(imgData, 0, 0);
+    }
+
+    function renderResults() {
+        if (STATE.imgFront.length === 0) return;
+        
+        // Left Column (FOCUSED PHASE)
+        // Note: Using the canvases previously named "rd" for "Spatial Phase"
+        renderMatrix(ctxRdFront, STATE.imgFront, 'phase');
+        renderMatrix(ctxRdRear, STATE.imgRear, 'phase');
+        renderMatrix(ctxRdInter, STATE.imgInter, 'phase');
+        
+        // Right Column (FOCUSED MAGNITUDE)
+        renderMatrix(ctxSlcFront, STATE.imgFront, 'mag');
+        renderMatrix(ctxSlcRear, STATE.imgRear, 'mag');
+        renderMatrix(ctxSlcInter, STATE.imgInter, 'mag');
+    }
+
+    function setActiveButton(id) {
+        ['btn-scene-grid', 'btn-scene-single', 'btn-scene-slow', 'btn-scene-fast', 'btn-scene-multi'].forEach(btn => {
+            document.getElementById(btn).classList.remove('active');
+        });
+        document.getElementById(id).classList.add('active');
+    }
+
+    function enableSceneButtons(enabled) {
+        ['btn-scene-grid', 'btn-scene-single', 'btn-scene-slow', 'btn-scene-fast', 'btn-scene-multi'].forEach(btn => {
+            document.getElementById(btn).disabled = !enabled;
+        });
+    }
+
+    document.getElementById('btn-scene-grid').addEventListener('click', () => {
+        STATE.currentMode = 'grid';
+        setActiveButton('btn-scene-grid');
+        resetData();
+    });
+
+    document.getElementById('btn-scene-single').addEventListener('click', () => {
+        STATE.currentMode = 'single';
+        setActiveButton('btn-scene-single');
+        resetData();
+    });
+
+    document.getElementById('btn-scene-slow').addEventListener('click', () => {
+        STATE.currentMode = 'slow';
+        setActiveButton('btn-scene-slow');
+        resetData();
+    });
+
+    document.getElementById('btn-scene-fast').addEventListener('click', () => {
+        STATE.currentMode = 'fast';
+        setActiveButton('btn-scene-fast');
+        resetData();
+    });
+
+    document.getElementById('btn-scene-multi').addEventListener('click', () => {
+        STATE.currentMode = 'multi';
+        setActiveButton('btn-scene-multi');
+        resetData();
+    });
+
+    // Speed Control Logic
+    const sliderSpeed = document.getElementById('slider-fast-speed');
+    const inputSpeed = document.getElementById('input-fast-speed');
+
+    // Make the interval 1/4 of V_amb
+    const stepVal = vAmb / 4;
+
+    // Set step based on V_amb / 4
+    if (sliderSpeed && inputSpeed) {
+        sliderSpeed.step = stepVal;
+        inputSpeed.step = stepVal;
+    }
+
+    // Separate handlers to prevent cursor jumping (glitching)
+    if (sliderSpeed && inputSpeed) {
+        sliderSpeed.addEventListener('input', (e) => {
+            inputSpeed.value = e.target.value;
+            if(STATE.currentMode === 'fast') resetData();
+        });
+
+        inputSpeed.addEventListener('input', (e) => {
+            // Update slider but do NOT write back to inputSpeed to avoid cursor reset
+            sliderSpeed.value = e.target.value;
+            if(STATE.currentMode === 'fast') resetData();
+        });
+    }
+    
+    // PRF Toggle Logic
+    const prfBtn = document.getElementById('btn-prf-toggle');
+    let isHighPrf = false;
+    const basePrf = 100;
+    
+    prfBtn.addEventListener('click', () => {
+        isHighPrf = !isHighPrf;
+        
+        if (isHighPrf) {
+            CONFIG.prf = basePrf * 1.3;
+        } else {
+            CONFIG.prf = basePrf;
+        }
+        
+        prfBtn.textContent = `PRF: ${CONFIG.prf.toFixed(0)}Hz`;
+        
+        // Force recompute of matched filter since PRF changed
+        STATE.matchedFilter = null;
+        resetData();
+    });
+
+    document.getElementById('btn-collect').addEventListener('click', () => {
+        resetData(); // Ensure clean slate
+        STATE.isCollecting = true;
+        document.getElementById('btn-collect').disabled = true;
+        enableSceneButtons(false);
+        document.getElementById('progress-container').style.display = 'block';
+    });
+
+    const fsBtn = document.getElementById('btn-fullscreen');
+    fsBtn.addEventListener('click', () => {
+        if (!document.fullscreenElement) {
+            document.documentElement.requestFullscreen().catch(err => console.log(err));
+        }
+    });
+    document.addEventListener('fullscreenchange', () => {
+        fsBtn.style.display = document.fullscreenElement ? 'none' : 'block';
+    });
+
+    function loop() {
+        if (STATE.isCollecting) runCollectionStep();
+        drawScene();
+        requestAnimationFrame(loop);
+    }
+    
+    function resize() {
+        const els = [
+            ctxScene.canvas, 
+            ctxRdFront.canvas, ctxSlcFront.canvas,
+            ctxRdRear.canvas, ctxSlcRear.canvas,
+            ctxRdInter.canvas, ctxSlcInter.canvas
+        ];
+        els.forEach(c => {
+            const rect = c.parentElement.getBoundingClientRect();
+            c.width = rect.width;
+            c.height = rect.height;
+        });
+    }
+    window.addEventListener('resize', resize);
+    
+    // Init
+    resize();
+    generateTargets('grid');
+    loop();
+
+})();
+</script>
+</body>
+</html>

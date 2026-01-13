@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CRT Velocity Solver</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        input[type=number]::-webkit-inner-spin-button, 
+        input[type=number]::-webkit-outer-spin-button { opacity: 1; }
+        .canvas-container { background: #020617; position: relative; display: flex; justify-content: center; align-items: center; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef } = React;
+
+        const App = () => {
+            const [view, setView] = useState('visual'); 
+            const [maxDisplayError, setMaxDisplayError] = useState(20);
+            const [range, setRange] = useState(20); // Dynamic range for k1 and k2
+            const canvasRef = useRef(null);
+
+            // Physical Constants
+            const lambda = 0.03;
+            const v_amb = 7600;
+            const R1 = 0.2;
+            const R2 = 5.0;
+            const phase1 = -2.503185; // Updated phase measurement
+            const phase2 = 0.276;
+
+            const C1 = (lambda * v_amb) / (4 * Math.PI * R1);
+            const C2 = (lambda * v_amb) / (4 * Math.PI * R2);
+
+            const tableResults = useMemo(() => {
+                const results = [];
+                for (let k1 = -range; k1 <= range; k1++) {
+                    const vr1 = C1 * (phase1 + 2 * Math.PI * k1);
+                    for (let k2 = -range; k2 <= range; k2++) {
+                        const vr2 = C2 * (phase2 + 2 * Math.PI * k2);
+                        const diff = Math.abs(vr1 - vr2);
+                        results.push({ k1, k2, vr1, vr2, diff, avg: (vr1 + vr2) / 2 });
+                    }
+                }
+                return results.sort((a, b) => a.diff - b.diff);
+            }, [C1, C2, range]);
+
+            useEffect(() => {
+                if (view !== 'visual' || !canvasRef.current) return;
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext('2d');
+                
+                const size = 600;
+                const padding = 60;
+                const plotSize = size - padding * 2;
+                
+                canvas.width = size;
+                canvas.height = size;
+
+                ctx.fillStyle = '#020617';
+                ctx.fillRect(0, 0, size, size);
+
+                const steps = (range * 2) + 1;
+                const cellSize = plotSize / steps;
+
+                const getColor = (diff) => {
+                    const ratio = Math.min(diff / maxDisplayError, 1);
+                    if (diff < 0.1) return '#22ff5e'; 
+                    
+                    if (ratio < 0.3) {
+                        const r = Math.floor(ratio * 3.33 * 255);
+                        return `rgb(${r}, 255, 0)`;
+                    } else if (ratio < 0.7) {
+                        const g = Math.floor((1 - (ratio - 0.3) * 2.5) * 255);
+                        return `rgb(255, ${g}, 0)`;
+                    } else {
+                        const r = 255 - Math.floor((ratio - 0.7) * 3.33 * 150);
+                        return `rgb(${r}, 20, 20)`;
+                    }
+                };
+
+                for (let k2 = -range; k2 <= range; k2++) {
+                    for (let k1 = -range; k1 <= range; k1++) {
+                        const vr1 = C1 * (phase1 + 2 * Math.PI * k1);
+                        const vr2 = C2 * (phase2 + 2 * Math.PI * k2);
+                        const diff = Math.abs(vr1 - vr2);
+
+                        const px = padding + (k1 + range) * cellSize;
+                        const py = padding + (range - k2) * cellSize; 
+
+                        ctx.fillStyle = getColor(diff);
+                        ctx.fillRect(px, py, cellSize, cellSize);
+
+                        // Only glow if it's very relevant (less than 0.5 or 5% of max error)
+                        if (diff < Math.min(0.5, maxDisplayError * 0.05)) {
+                            ctx.shadowBlur = 10;
+                            ctx.shadowColor = '#22ff5e';
+                            ctx.strokeRect(px, py, cellSize, cellSize);
+                            ctx.shadowBlur = 0;
+                        }
+                    }
+                }
+
+                ctx.strokeStyle = '#334155';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(padding, padding, plotSize, plotSize);
+
+                ctx.fillStyle = '#94a3b8';
+                ctx.font = 'bold 12px Inter';
+                ctx.textAlign = 'center';
+                ctx.fillText('k₁ Offset', size/2, size - 15);
+                
+                ctx.save();
+                ctx.translate(20, size/2);
+                ctx.rotate(-Math.PI/2);
+                ctx.fillText('k₂ Offset', 0, 0);
+                ctx.restore();
+
+                ctx.font = '10px monospace';
+                ctx.fillText(`-${range}`, padding, size - padding + 15);
+                ctx.fillText('0', size/2, size - padding + 15);
+                ctx.fillText(`${range}`, size - padding, size - padding + 15);
+
+                ctx.textAlign = 'right';
+                ctx.fillText(`${range}`, padding - 10, padding + 5);
+                ctx.fillText('0', padding - 10, size/2 + 5);
+                ctx.fillText(`-${range}`, padding - 10, size - padding + 5);
+
+            }, [view, maxDisplayError, range, C1, C2]);
+
+            return (
+                <div className="max-w-7xl mx-auto p-4 md:p-8">
+                    <header className="mb-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                        <div>
+                            <h1 className="text-3xl font-bold text-slate-800 tracking-tight">1:1 CRT Heatmap</h1>
+                            <p className="text-slate-500 font-medium">Resolution: {range * 2 + 1} × {range * 2 + 1} pairs</p>
+                        </div>
+                        <div className="flex bg-white rounded-xl p-1 border shadow-sm">
+                            <button onClick={() => setView('visual')} className={`px-6 py-2 rounded-lg text-sm font-semibold transition-all ${view === 'visual' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-50'}`}>Heatmap Grid</button>
+                            <button onClick={() => setView('table')} className={`px-6 py-2 rounded-lg text-sm font-semibold transition-all ${view === 'table' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-50'}`}>Top Candidates</button>
+                        </div>
+                    </header>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+                        <div className="space-y-6">
+                            <div className="bg-white p-6 rounded-2xl border shadow-sm">
+                                <h2 className="text-xs font-bold uppercase tracking-widest text-indigo-500 mb-6">Plot Configuration</h2>
+                                <div className="space-y-6">
+                                    <div>
+                                        <label className="block text-sm font-medium text-slate-700 mb-2">Grid Range (±k)</label>
+                                        <input 
+                                            type="range" min="5" max="100" step="5" 
+                                            value={range} 
+                                            onChange={e => setRange(Number(e.target.value))} 
+                                            className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                                        />
+                                        <div className="flex justify-between text-[10px] text-slate-500 mt-2 font-mono">
+                                            <span>Zoomed In</span>
+                                            <span>±{range} ({range * 2 + 1} px)</span>
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-sm font-medium text-slate-700 mb-2">Sensitivity (m/s)</label>
+                                        <input 
+                                            type="range" min="1" max="100" step="1" 
+                                            value={maxDisplayError} 
+                                            onChange={e => setMaxDisplayError(Number(e.target.value))} 
+                                            className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                                        />
+                                        <div className="flex justify-between text-[10px] text-slate-500 mt-2 font-mono">
+                                            <span>High Sensitivity</span>
+                                            <span>{maxDisplayError} m/s</span>
+                                        </div>
+                                    </div>
+
+                                    <div className="pt-6 border-t space-y-4 text-xs">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-5 h-5 rounded-md bg-[#22ff5e] shadow-[0_0_10px_#22ff5e]"></div>
+                                            <div>
+                                                <div className="font-bold text-slate-700">Perfect Match</div>
+                                                <div className="text-slate-400">&lt; 0.1 m/s error</div>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-5 h-5 rounded-md bg-red-800"></div>
+                                            <div>
+                                                <div className="font-bold text-slate-700">High Error</div>
+                                                <div className="text-slate-400">&gt; {maxDisplayError} m/s</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="lg:col-span-3">
+                            {view === 'visual' ? (
+                                <div className="bg-white rounded-3xl shadow-xl border p-4 flex flex-col items-center">
+                                    <div className="canvas-container rounded-2xl overflow-hidden shadow-2xl border-8 border-slate-900">
+                                        <canvas ref={canvasRef}></canvas>
+                                    </div>
+                                    <div className="mt-6 flex gap-12 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                                        <span>Square Aspect Ratio</span>
+                                        <span>Uniform Integer Spacing</span>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="bg-white rounded-3xl shadow-xl border overflow-hidden">
+                                    <div className="px-8 py-6 border-b bg-slate-50">
+                                        <h2 className="font-bold text-slate-800 uppercase tracking-tight">Best Candidates in ±{range} Range</h2>
+                                    </div>
+                                    <div className="overflow-x-auto max-h-[600px]">
+                                        <table className="w-full text-left">
+                                            <thead className="sticky top-0 bg-slate-100 text-[10px] font-bold uppercase text-slate-500 tracking-widest">
+                                                <tr>
+                                                    <th className="px-8 py-4">k₁</th>
+                                                    <th className="px-8 py-4">k₂</th>
+                                                    <th className="px-8 py-4">Diff (m/s)</th>
+                                                    <th className="px-8 py-4">Vᵣ Result</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100 font-mono text-sm">
+                                                {tableResults.slice(0, 50).map((r, i) => (
+                                                    <tr key={i} className="hover:bg-indigo-50 transition-colors">
+                                                        <td className="px-8 py-4 font-bold text-indigo-600">{r.k1}</td>
+                                                        <td className="px-8 py-4 font-bold text-indigo-600">{r.k2}</td>
+                                                        <td className="px-8 py-4">
+                                                            <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${r.diff < 0.1 ? 'bg-green-500 text-white' : 'bg-slate-100 text-slate-700'}`}>
+                                                                {r.diff.toFixed(5)}
+                                                            </span>
+                                                        </td>
+                                                        <td className="px-8 py-4 text-slate-600">{r.avg.toFixed(3)} m/s</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const container = document.getElementById('root');
+        const root = ReactDOM.createRoot(container);
+        root.render(<App />);
+        setTimeout(() => lucide.createIcons(), 100);
+    </script>
+
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</body>
+</html>
